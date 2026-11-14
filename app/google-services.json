@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "220292166936",
+    "project_id": "com-example-saddlemate-a2b8f",
+    "storage_bucket": "com-example-saddlemate-a2b8f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:220292166936:android:5fd1eb67ed25b1f92e1a6d",
+        "android_client_info": {
+          "package_name": "com.example.saddlemate"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyARAEDSjFaEqAZSHFfPqwNzXgU4S7lbG0s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
