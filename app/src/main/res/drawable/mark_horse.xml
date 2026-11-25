@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Horse head, facing left. Same silhouette as HorseIcons.HorseHead. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#C62828"
+        android:pathData="M17,2 L15,3 C13,4 12,6 11,8 L9,11 C7,12 5,14 4,17 L3,22 L6,22 L8,19 C10,17 12,16 14,15 L16,11 C18,9 19,6 19,4 Z"/>
+</vector>

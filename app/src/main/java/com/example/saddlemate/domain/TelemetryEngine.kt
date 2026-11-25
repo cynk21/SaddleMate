@@ -79,6 +79,8 @@ class TelemetryEngine(private val maxPlausibleSpeedMps: Double = 25.0) {
 
         val duration = pts.last().timeMillis - pts.first().timeMillis
         val avg = if (duration > 0) total / (duration / 1000.0) * 3.6 else 0.0
+        // Only fixes with altitude count; their order is the track order.
+        val altitudes = pts.mapNotNull { it.altitudeM }
         return RideAnalysis(
             distanceMeters = total,
             durationMs = duration,
@@ -86,6 +88,7 @@ class TelemetryEngine(private val maxPlausibleSpeedMps: Double = 25.0) {
             maxSpeedKmh = maxSpeed,
             splits = splits,
             gaitTimeMs = gaitTime,
+            elevation = ElevationCalculator.ascentDescent(altitudes),
         )
     }
 
