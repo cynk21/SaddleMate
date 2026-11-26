@@ -88,6 +88,12 @@ fun RideDetailScreen(viewModel: RideDetailViewModel = hiltViewModel(), onDeleted
                 if (ride.riderCalories > 0 || ride.horseCalories > 0) {
                     Text("Kalorien: Reiter ~${ride.riderCalories} kcal · Pferd ~${ride.horseCalories} kcal")
                 }
+                if (ride.avgHorseHrBpm > 0 || ride.recoveryHr2MinBpm > 0) {
+                    Text(
+                        "Pferde-Puls: Ø ${ride.avgHorseHrBpm} / Max ${ride.maxHorseHrBpm} bpm" +
+                            if (ride.recoveryHr2MinBpm > 0) " · Erholung ${ride.recoveryHr2MinBpm} bpm" else "",
+                    )
+                }
                 if (ride.ascentM > 0 || ride.descentM > 0) {
                     Text("ca. ${"%.0f".format(ride.ascentM)} m auf · ${"%.0f".format(ride.descentM)} m ab")
                 }

@@ -438,6 +438,57 @@ fun FeedbackScreen(
             }
         }
 
+        // Supabase Cloud-Sync (uses supabase/migrations/001_initial_schema.sql; works offline when unconfigured)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            var showSyncDialog by remember { mutableStateOf(false) }
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Supabase Cloud-Sync (Stufe 2)", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (state.supabaseUrl.isBlank()) "Lokal-Modus aktiv. Optional SUPABASE_URL & Anon-Key für Cloud-Sync hinterlegen."
+                    else "Konfiguriert: ${state.supabaseUrl}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                state.syncStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        enabled = !state.syncing,
+                        onClick = { viewModel.syncWithSupabase() },
+                    ) { Text(if (state.syncing) "Synchronisiere…" else "Jetzt synchronisieren") }
+                    OutlinedButton(onClick = { showSyncDialog = true }) { Text("Konfigurieren") }
+                }
+            }
+            if (showSyncDialog) {
+                var urlDraft by remember(state.supabaseUrl) { mutableStateOf(state.supabaseUrl) }
+                var keyDraft by remember(state.supabaseAnonKey) { mutableStateOf(state.supabaseAnonKey) }
+                AlertDialog(
+                    onDismissRequest = { showSyncDialog = false },
+                    title = { Text("Supabase-Projekt verbinden") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = urlDraft,
+                                onValueChange = { urlDraft = it },
+                                label = { Text("SUPABASE_URL (https://...)") },
+                                singleLine = true,
+                            )
+                            OutlinedTextField(
+                                value = keyDraft,
+                                onValueChange = { keyDraft = it },
+                                label = { Text("SUPABASE_ANON_KEY") },
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            viewModel.saveSupabaseConfig(urlDraft, keyDraft)
+                            showSyncDialog = false
+                        }) { Text("Speichern") }
+                    },
+                    dismissButton = { OutlinedButton(onClick = { showSyncDialog = false }) { Text("Abbrechen") } },
+                )
+            }
+        }
+
         Text("Priorisierte Liste", style = MaterialTheme.typography.titleMedium)
         ranked.forEach { item ->
             Card(modifier = Modifier.fillMaxWidth()) {

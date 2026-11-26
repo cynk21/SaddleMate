@@ -29,6 +29,7 @@ import com.example.saddlemate.domain.RideAnalysis
 import com.example.saddlemate.domain.RelativeSide
 import com.example.saddlemate.domain.SurfaceLoadTracker
 import com.example.saddlemate.domain.TelemetryEngine
+import com.example.saddlemate.domain.VitalMonitor
 import com.example.saddlemate.domain.VoiceQaRouter
 import com.example.saddlemate.domain.WelfareEngine
 import com.example.saddlemate.domain.WelfareReport
@@ -36,9 +37,11 @@ import com.example.saddlemate.domain.NavigationGuidance
 import com.example.saddlemate.domain.PinProximity
 import com.example.saddlemate.domain.outputForAlert
 import com.example.saddlemate.sensors.AlertFeedback
+import com.example.saddlemate.sensors.BleHrState
 import com.example.saddlemate.sensors.ImpactSensor
 import com.example.saddlemate.sensors.RideService
 import com.example.saddlemate.sensors.LocationSource
+import com.example.saddlemate.sensors.SensorBridgeBLE
 import com.example.saddlemate.store.RideSettings
 import kotlinx.coroutines.delay
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -67,11 +70,14 @@ data class CockpitState(
     val audioMode: AudioMode = AudioMode.FULL_COPILOT,
     val lastSummary: RideAnalysis? = null,
     val lastRideId: String? = null,
-    /** A stored ride shown on the map, or null when none is shown. */
+    /** A stored/generated/catalog route shown on the map, or null when none is shown. */
     val shownRideId: String? = null,
+    val shownRouteName: String? = null,
+    /** Whether the route overlay on the map is currently hidden (so a single tap brings it back). */
+    val routeHidden: Boolean = false,
     /** The track of the chosen ride, drawn as a dashed route (no speed colours). */
     val shownTrack: List<GeoPoint> = emptyList(),
-    /** The route the rider started as navigation target (stage 1: visual only). Null when none. */
+    /** The route the rider started as navigation target. Null when none. */
     val navRouteId: String? = null,
     /** Short navigation line shown on the map: remaining distance, next turn, off-route. */
     val navHint: String? = null,
@@ -109,6 +115,11 @@ data class CockpitState(
     val fallMessage: String? = null,
     /** Last spoken Q&A answer for the rider. */
     val lastQaAnswer: String? = null,
+    /** Live BLE heart rate state and Vet-Gate recovery reading. */
+    val bleHr: BleHrState = BleHrState(),
+    val avgHorseHrBpm: Int = 0,
+    val maxHorseHrBpm: Int = 0,
+    val recoveryHr2MinBpm: Int = 0,
 )
 
 /** A hazard that triggered the radar during the ride, with where and when it happened. */
@@ -131,6 +142,7 @@ class RideViewModel @Inject constructor(
     private val feedback: AlertFeedback,
     private val locationSource: LocationSource,
     private val impactSensor: ImpactSensor,
+    private val bleSensor: SensorBridgeBLE,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(CockpitState())
@@ -150,6 +162,7 @@ class RideViewModel @Inject constructor(
     private val fallDetector = FallDetector()
     private val fallAlarm = FallAlarm(countdownSec = 30)
     private val symmetryTracker = GaitSymmetryTracker()
+    private val hrSamples = mutableListOf<Int>()
     private val track = mutableListOf<GeoPoint>()
     private var rideStart = 0L
     private var warmupMs = 0L
@@ -194,6 +207,20 @@ class RideViewModel @Inject constructor(
         viewModelScope.launch {
             settings.audioMode.collect { mode ->
                 _state.value = _state.value.copy(audioMode = mode)
+            }
+        }
+        viewModelScope.launch {
+            bleSensor.state.collect { ble ->
+                val bpm = ble.bpm
+                if (bpm != null && bpm > 0 && _state.value.running) {
+                    hrSamples += bpm
+                }
+                val (avg, max) = VitalMonitor.stats(hrSamples)
+                _state.value = _state.value.copy(
+                    bleHr = ble,
+                    avgHorseHrBpm = avg,
+                    maxHorseHrBpm = max,
+                )
             }
         }
     }
@@ -260,6 +287,7 @@ class RideViewModel @Inject constructor(
             track.clear()
             spokenAlerts.clear()
             spokenPins.clear()
+            hrSamples.clear()
             symmetryTracker.reset()
             fallDetector.reset()
             fallAlarm.reset()
@@ -280,10 +308,13 @@ class RideViewModel @Inject constructor(
                 routeLengthMeters = routeLength,
                 requiredWarmupMinutes = reqWarmup,
                 shownRideId = _state.value.shownRideId,
+                shownRouteName = _state.value.shownRouteName,
+                routeHidden = _state.value.routeHidden,
                 shownTrack = _state.value.shownTrack,
                 navRouteId = _state.value.navRouteId,
                 navHint = _state.value.navHint,
                 ownPosition = _state.value.ownPosition,
+                bleHr = _state.value.bleHr,
                 bannerMessage = "Ritt gestartet",
             )
             val newId = UUID.randomUUID().toString()
@@ -309,6 +340,7 @@ class RideViewModel @Inject constructor(
             track.clear()
             spokenAlerts.clear()
             spokenPins.clear()
+            hrSamples.clear()
             symmetryTracker.reset()
             fallDetector.reset()
             fallAlarm.reset()
@@ -331,10 +363,13 @@ class RideViewModel @Inject constructor(
                 routeLengthMeters = routeLength,
                 requiredWarmupMinutes = reqWarmup,
                 shownRideId = _state.value.shownRideId,
+                shownRouteName = _state.value.shownRouteName,
+                routeHidden = _state.value.routeHidden,
                 shownTrack = _state.value.shownTrack,
                 navRouteId = _state.value.navRouteId,
                 navHint = _state.value.navHint,
                 ownPosition = routePts.firstOrNull(),
+                bleHr = _state.value.bleHr,
                 bannerMessage = "Demo-Ritt läuft (Schritt → Trab → Galopp)",
             )
             val newId = UUID.randomUUID().toString()
@@ -533,10 +568,12 @@ class RideViewModel @Inject constructor(
         if (_state.value.running) return
         viewModelScope.launch {
             val points = repository.track(rideId)
-            // A chosen ride is a plain dashed route, not a speed-coloured track. Kept apart from state.trail.
+            val ride = repository.ride(rideId)
             _state.value = _state.value.copy(
                 shownTrack = points,
                 shownRideId = rideId,
+                shownRouteName = ride?.name?.ifBlank { "Gespeicherter Ritt" } ?: "Gespeicherter Ritt",
+                routeHidden = false,
                 navRouteId = null,
                 navHint = null,
             )
@@ -557,9 +594,86 @@ class RideViewModel @Inject constructor(
             routeLengthMeters = RouteCatalog.lengthMeters(points),
             shownTrack = points,
             shownRideId = info.id,
+            shownRouteName = info.name,
+            routeHidden = false,
             navRouteId = null,
             navHint = null,
         )
+    }
+
+    /** Shows a dynamically generated Stallwechsel loop on the map and prepares it for navigation. */
+    fun showGeneratedRoute(id: String, name: String, points: List<GeoPoint>) {
+        if (_state.value.running || points.size < 2) return
+        _state.value = _state.value.copy(
+            routeLengthMeters = RouteCatalog.lengthMeters(points),
+            shownTrack = points,
+            shownRideId = id,
+            shownRouteName = name,
+            routeHidden = false,
+            navRouteId = null,
+            navHint = null,
+        )
+    }
+
+    /** Hides the route/navi overlay without forgetting the selected route, so it can be shown again. */
+    fun hideRouteOverlay() {
+        if (_state.value.running) return
+        navCoach.reset()
+        _state.value = _state.value.copy(
+            routeHidden = true,
+            navRouteId = null,
+            navHint = null,
+        )
+    }
+
+    /** Restores a previously hidden route/navi overlay. */
+    fun showRouteOverlay() {
+        _state.value = _state.value.copy(routeHidden = false)
+    }
+
+    fun connectBleHeartRate() = bleSensor.startScanAndConnect()
+
+    fun startDummyBleHeartRate() = bleSensor.startDummyStream { _state.value.gait }
+
+    fun disconnectBleHeartRate() = bleSensor.disconnect()
+
+    /** Records a manual 15-s or Vet-Gate recovery pulse for the active/last ride. */
+    fun recordVetGateRecoveryBpm(bpm: Int) {
+        if (bpm <= 0) return
+        _state.value = _state.value.copy(recoveryHr2MinBpm = bpm)
+        val lastId = _state.value.lastRideId
+        if (lastId != null && !_state.value.running) {
+            viewModelScope.launch {
+                val ride = repository.ride(lastId) ?: return@launch
+                repository.saveRide(
+                    CompletedRide(
+                        id = ride.id,
+                        horseId = ride.horseId,
+                        startedAtMillis = ride.startedAtMillis,
+                        analysis = RideAnalysis(
+                            distanceMeters = ride.distanceMeters,
+                            durationMs = ride.durationMs,
+                            averageSpeedKmh = ride.averageSpeedKmh,
+                            maxSpeedKmh = ride.maxSpeedKmh,
+                            splits = emptyList(),
+                            gaitTimeMs = emptyMap(),
+                        ),
+                        welfare = WelfareReport(
+                            ride.welfareScore,
+                            ride.tendonLoad,
+                            ride.warnings.lines().filter { it.isNotBlank() },
+                        ),
+                        samples = emptyList(),
+                        routeId = ride.routeId,
+                        riderCalories = ride.riderCalories,
+                        horseCalories = ride.horseCalories,
+                        avgHorseHrBpm = ride.avgHorseHrBpm,
+                        maxHorseHrBpm = ride.maxHorseHrBpm,
+                        recoveryHr2MinBpm = bpm,
+                    ),
+                )
+            }
+        }
     }
 
     /** Changes the text of a map mark. Empty text is refused. */
@@ -783,6 +897,7 @@ class RideViewModel @Inject constructor(
             riderWeightKg = settings.riderProfile.value.weightKg,
             horseWeightKg = horse.weightKg,
         )
+        val (avgHr, maxHr) = VitalMonitor.stats(hrSamples)
         repository.saveRide(
             CompletedRide(
                 id = id,
@@ -795,6 +910,9 @@ class RideViewModel @Inject constructor(
                 events = autoEvents,
                 riderCalories = calories.riderKcal,
                 horseCalories = calories.horseKcal,
+                avgHorseHrBpm = avgHr,
+                maxHorseHrBpm = maxHr,
+                recoveryHr2MinBpm = _state.value.recoveryHr2MinBpm,
             ),
         )
         val canterStretches = CanterStretchDetector.detect(track.toList(), telemetry)

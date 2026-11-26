@@ -44,6 +44,7 @@ import com.example.saddlemate.domain.Gait
 import com.example.saddlemate.domain.GaitSymmetryTracker
 import com.example.saddlemate.domain.RadarAlert
 import com.example.saddlemate.domain.RelativeSide
+import com.example.saddlemate.domain.VitalMonitor
 import com.example.saddlemate.ui.viewmodels.CockpitState
 import com.example.saddlemate.ui.viewmodels.RideViewModel
 
@@ -109,6 +110,10 @@ fun CockpitScreen(
         onDismissFall = viewModel::dismissFallResult,
         onAskQuestion = viewModel::askRiderQuestion,
         onSaveCanterStretch = viewModel::saveCanterStretchMark,
+        onConnectBle = viewModel::connectBleHeartRate,
+        onDummyBle = viewModel::startDummyBleHeartRate,
+        onDisconnectBle = viewModel::disconnectBleHeartRate,
+        onSaveRecoveryPulse = viewModel::recordVetGateRecoveryBpm,
     )
 }
 
@@ -126,6 +131,10 @@ fun CockpitContent(
     onDismissFall: () -> Unit = {},
     onAskQuestion: (String) -> Unit = {},
     onSaveCanterStretch: (CanterStretch) -> Unit = {},
+    onConnectBle: () -> Unit = {},
+    onDummyBle: () -> Unit = {},
+    onDisconnectBle: () -> Unit = {},
+    onSaveRecoveryPulse: (Int) -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -150,6 +159,13 @@ fun CockpitContent(
         RouteProgressCard(state)
         RadarCard(state.radar)
         WelfareCard(state)
+        HeartRateCard(
+            state = state,
+            onConnectBle = onConnectBle,
+            onDummyBle = onDummyBle,
+            onDisconnectBle = onDisconnectBle,
+            onSaveRecoveryPulse = onSaveRecoveryPulse,
+        )
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.running) {
@@ -368,6 +384,84 @@ private fun WelfareCard(state: CockpitState) {
             Text(symText, style = MaterialTheme.typography.bodySmall)
             state.surfaceWarning?.let { Text("⚠ $it", color = MaterialTheme.colorScheme.tertiary) }
             state.welfare?.warnings?.forEach { Text("• $it") }
+        }
+    }
+}
+
+@Composable
+private fun HeartRateCard(
+    state: CockpitState,
+    onConnectBle: () -> Unit,
+    onDummyBle: () -> Unit,
+    onDisconnectBle: () -> Unit,
+    onSaveRecoveryPulse: (Int) -> Unit,
+) {
+    val ble = state.bleHr
+    val context = LocalContext.current
+    val blePermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { granted ->
+        if (granted.values.any { it }) onConnectBle()
+    }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Pferde-Herzfrequenz & Vet-Gate", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (ble.bpm != null) VitalMonitor.zoneLabel(ble.bpm) else ble.status,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            if (state.avgHorseHrBpm > 0) {
+                Text(
+                    "Ritt Ø ${state.avgHorseHrBpm} bpm · Max ${state.maxHorseHrBpm} bpm",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (state.recoveryHr2MinBpm > 0) {
+                val ok = VitalMonitor.isVetGatePassed(state.recoveryHr2MinBpm)
+                Text(
+                    "Vet-Gate Erholung (2 Min.): ${state.recoveryHr2MinBpm} bpm → " +
+                        if (ok) "BESTANDEN (< ${VitalMonitor.VET_GATE_PASS_BPM} bpm)" else "NOCH ERHÖHT",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!ble.connected) {
+                    OutlinedButton(
+                        onClick = {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                                val hasScan = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.BLUETOOTH_SCAN,
+                                ) == PackageManager.PERMISSION_GRANTED
+                                val hasConn = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.BLUETOOTH_CONNECT,
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (hasScan && hasConn) {
+                                    onConnectBle()
+                                } else {
+                                    blePermLauncher.launch(
+                                        arrayOf(
+                                            Manifest.permission.BLUETOOTH_SCAN,
+                                            Manifest.permission.BLUETOOTH_CONNECT,
+                                        ),
+                                    )
+                                }
+                            } else {
+                                onConnectBle()
+                            }
+                        },
+                    ) { Text("BLE-Gurt (0x180D)") }
+                    OutlinedButton(onClick = onDummyBle) { Text("Test-Gurt") }
+                } else {
+                    OutlinedButton(onClick = onDisconnectBle) { Text("Gurt trennen") }
+                    ble.bpm?.let { currentBpm ->
+                        OutlinedButton(onClick = { onSaveRecoveryPulse(currentBpm) }) {
+                            Text("Als 2-Min-Vet-Gate")
+                        }
+                    }
+                }
+            }
         }
     }
 }

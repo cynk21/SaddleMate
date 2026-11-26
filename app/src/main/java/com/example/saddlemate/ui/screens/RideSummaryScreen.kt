@@ -59,6 +59,12 @@ fun RideSummaryContent(state: RideSummaryUiState, onBackToMap: () -> Unit = {}) 
                 if (ride.riderCalories > 0 || ride.horseCalories > 0) {
                     Text("Kalorien: Reiter ~${ride.riderCalories} kcal · Pferd ~${ride.horseCalories} kcal")
                 }
+                if (ride.avgHorseHrBpm > 0 || ride.recoveryHr2MinBpm > 0) {
+                    Text(
+                        "Pferde-Puls: Ø ${ride.avgHorseHrBpm} / Max ${ride.maxHorseHrBpm} bpm" +
+                            if (ride.recoveryHr2MinBpm > 0) " · Erholung ${ride.recoveryHr2MinBpm} bpm" else "",
+                    )
+                }
             }
         }
 

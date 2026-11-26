@@ -124,6 +124,14 @@ fun SaddleMateNavHost() {
                             restoreState = true
                         }
                     },
+                    onChooseGeneratedRoute = { loop ->
+                        rideViewModel.showGeneratedRoute(loop.id, loop.name, loop.points)
+                        navController.navigate(Tab.Map.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                 )
             }
             composable(Tab.Cockpit.route) { CockpitScreen() }

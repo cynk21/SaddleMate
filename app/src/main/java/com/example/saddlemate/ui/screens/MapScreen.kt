@@ -281,22 +281,31 @@ fun MapScreen(viewModel: RideViewModel = rideViewModelShared()) {
             }
         }
 
-        // Navigation: appears when a route is shown on the map. Starts and stops the guidance.
+        // Navigation: when a route is selected, it can be hidden and cleanly shown again with 1 tap.
         if (state.shownRideId != null) {
-            Row(
-                modifier = Modifier.padding(bottom = 80.dp).align(Alignment.BottomCenter),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(
-                    onClick = {
-                        if (state.navRouteId == null) viewModel.startNavigation() else viewModel.stopNavigation()
-                    },
+            if (state.routeHidden) {
+                OutlinedButton(
+                    onClick = { viewModel.showRouteOverlay() },
+                    modifier = Modifier.padding(bottom = 80.dp).align(Alignment.BottomCenter),
                 ) {
-                    Text(if (state.navRouteId == null) "Navi starten" else "Navi beenden")
+                    Text("Route & Navi einblenden")
                 }
-                if (state.navRouteId == null && !state.running) {
-                    OutlinedButton(onClick = { viewModel.clearStoredRide() }) {
-                        Text("Ausblenden")
+            } else {
+                Row(
+                    modifier = Modifier.padding(bottom = 80.dp).align(Alignment.BottomCenter),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        onClick = {
+                            if (state.navRouteId == null) viewModel.startNavigation() else viewModel.stopNavigation()
+                        },
+                    ) {
+                        Text(if (state.navRouteId == null) "Navi starten" else "Navi beenden")
+                    }
+                    if (!state.running) {
+                        OutlinedButton(onClick = { viewModel.hideRouteOverlay() }) {
+                            Text("Ausblenden")
+                        }
                     }
                 }
             }
@@ -335,15 +344,16 @@ fun MapScreen(viewModel: RideViewModel = rideViewModelShared()) {
         style?.let { drawTrail(it, state.trail) }
     }
 
-    // The chosen stored ride: a dashed route, like the walking trails, without speed colours.
-    // The whole route is fitted into view, so the rider sees it at once.
-    LaunchedEffect(state.shownTrack, style, mapRef) {
+    // The chosen stored/generated route: a dashed route, like the walking trails, without speed colours.
+    // Hidden cleanly when routeHidden == true and restored when shown again.
+    LaunchedEffect(state.shownTrack, state.routeHidden, style, mapRef) {
         val s = style ?: return@LaunchedEffect
-        drawShownRoute(s, state.shownTrack)
+        val visibleTrack = if (state.routeHidden) emptyList() else state.shownTrack
+        drawShownRoute(s, visibleTrack)
         val map = mapRef ?: return@LaunchedEffect
-        if (state.shownTrack.size >= 2) {
+        if (visibleTrack.size >= 2) {
             val bounds = LatLngBounds.Builder().apply {
-                state.shownTrack.forEach { include(LatLng(it.lat, it.lon)) }
+                visibleTrack.forEach { include(LatLng(it.lat, it.lon)) }
             }.build()
             map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 120))
             followRiderRef.value = false

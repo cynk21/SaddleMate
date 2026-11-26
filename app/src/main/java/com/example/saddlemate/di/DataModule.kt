@@ -33,6 +33,7 @@ object DataModule {
                 SaddleMateDatabase.MIGRATION_7_8,
                 SaddleMateDatabase.MIGRATION_8_9,
                 SaddleMateDatabase.MIGRATION_9_10,
+                SaddleMateDatabase.MIGRATION_10_11,
             )
             .build()
 

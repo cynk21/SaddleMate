@@ -118,6 +118,8 @@ fun WelfareContent(
             onToggleSunny = { sunny = !sunny },
         )
 
+        ManualPulseCounterCard()
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -244,6 +246,63 @@ private fun WeatherShieldCard(
                 OutlinedButton(onClick = onToggleSunny) { Text(if (sunny) "Sonne" else "Bewölkt") }
             }
             report.warnings.forEach { w -> Text("• $w", style = MaterialTheme.typography.bodySmall) }
+        }
+    }
+}
+
+@Composable
+private fun ManualPulseCounterCard() {
+    var running by remember { mutableStateOf(false) }
+    var secLeft by remember { mutableStateOf(com.example.saddlemate.domain.VitalMonitor.PULSE_WINDOW_SEC) }
+    var taps by remember { mutableStateOf(0) }
+    var lastBpm by remember { mutableStateOf<Int?>(null) }
+
+    androidx.compose.runtime.LaunchedEffect(running) {
+        if (!running) return@LaunchedEffect
+        while (secLeft > 0) {
+            kotlinx.coroutines.delay(1_000L)
+            secLeft -= 1
+        }
+        running = false
+        lastBpm = com.example.saddlemate.domain.VitalMonitor.bpmFrom15SecTaps(taps)
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("15-Sekunden-Stall-Pulszähler", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Für sofortige Nutzung ohne Bluetooth-Gurt: Start drücken und bei jedem Herzschlag / Atemzug tippen.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (running) {
+                Text("Noch $secLeft s · $taps Schläge", style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { taps += 1 },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("+ Schlag tippen ($taps)") }
+                    OutlinedButton(onClick = {
+                        running = false
+                        lastBpm = com.example.saddlemate.domain.VitalMonitor.bpmFrom15SecTaps(taps)
+                    }) { Text("Fertig") }
+                }
+            } else {
+                lastBpm?.let { bpm ->
+                    val ok = com.example.saddlemate.domain.VitalMonitor.isVetGatePassed(bpm)
+                    Text(
+                        "${com.example.saddlemate.domain.VitalMonitor.zoneLabel(bpm)} · " +
+                            if (ok) "Vet-Gate OK (< 64)" else "Über 64 bpm",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+                Button(
+                    onClick = {
+                        taps = 0
+                        secLeft = com.example.saddlemate.domain.VitalMonitor.PULSE_WINDOW_SEC
+                        running = true
+                    },
+                ) { Text("15-s-Messung starten") }
+            }
         }
     }
 }

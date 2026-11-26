@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PendingVoicePinEntity::class,
         FeedbackNoteEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 abstract class SaddleMateDatabase : RoomDatabase() {
@@ -26,6 +26,15 @@ abstract class SaddleMateDatabase : RoomDatabase() {
     abstract fun feedbackNoteDao(): FeedbackNoteDao
 
     companion object {
+        /** v10 -> v11: horse heart rate columns (avg, max, 2-min recovery) on rides. */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE rides ADD COLUMN avgHorseHrBpm INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE rides ADD COLUMN maxHorseHrBpm INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE rides ADD COLUMN recoveryHr2MinBpm INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         /** v9 -> v10: priority and userStory columns on feedback_notes for admin backlog triage. */
         val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {

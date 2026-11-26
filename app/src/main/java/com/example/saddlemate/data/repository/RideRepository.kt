@@ -39,6 +39,9 @@ data class CompletedRide(
     val events: List<RideEventEntity> = emptyList(),
     val riderCalories: Int = 0,
     val horseCalories: Int = 0,
+    val avgHorseHrBpm: Int = 0,
+    val maxHorseHrBpm: Int = 0,
+    val recoveryHr2MinBpm: Int = 0,
 )
 
 /** Single source of truth for horses and rides. Local Room now, Firestore sync later. */
@@ -195,6 +198,9 @@ class RideRepository @Inject constructor(
                 descentM = ride.analysis.elevation.descentM,
                 riderCalories = ride.riderCalories,
                 horseCalories = ride.horseCalories,
+                avgHorseHrBpm = ride.avgHorseHrBpm,
+                maxHorseHrBpm = ride.maxHorseHrBpm,
+                recoveryHr2MinBpm = ride.recoveryHr2MinBpm,
             ),
         )
         // The service writes each fix while the ride runs. Only if none reached the database

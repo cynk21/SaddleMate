@@ -60,6 +60,10 @@ data class RideEntity(
     /** Estimated calories spent during the ride (kcal) for rider and horse. */
     val riderCalories: Int = 0,
     val horseCalories: Int = 0,
+    /** Horse heart rate measurements from BLE strap (0x180D) or Vet-Gate recovery check. */
+    val avgHorseHrBpm: Int = 0,
+    val maxHorseHrBpm: Int = 0,
+    val recoveryHr2MinBpm: Int = 0,
 )
 
 @Entity(

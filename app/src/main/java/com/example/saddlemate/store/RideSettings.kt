@@ -77,6 +77,24 @@ class RideSettings @Inject constructor(
         _riderProfile.value = profile
     }
 
+    private val _supabaseConfig = MutableStateFlow(
+        Pair(
+            prefs.getString(KEY_SUPABASE_URL, "") ?: "",
+            prefs.getString(KEY_SUPABASE_KEY, "") ?: "",
+        ),
+    )
+    val supabaseConfig: StateFlow<Pair<String, String>> = _supabaseConfig.asStateFlow()
+
+    fun saveSupabaseConfig(url: String, anonKey: String) {
+        val u = url.trim()
+        val k = anonKey.trim()
+        prefs.edit()
+            .putString(KEY_SUPABASE_URL, u)
+            .putString(KEY_SUPABASE_KEY, k)
+            .apply()
+        _supabaseConfig.value = Pair(u, k)
+    }
+
     private fun loadRiderProfile(): RiderProfile = RiderProfile(
         name = prefs.getString(KEY_RIDER_NAME, "") ?: "",
         weightKg = prefs.getFloat(KEY_RIDER_WEIGHT, 70f).toDouble(),
@@ -94,5 +112,7 @@ class RideSettings @Inject constructor(
         const val KEY_RIDER_AGE = "rider_age_years"
         const val KEY_EMERGENCY_NAME = "emergency_name"
         const val KEY_EMERGENCY_PHONE = "emergency_phone"
+        const val KEY_SUPABASE_URL = "supabase_url"
+        const val KEY_SUPABASE_KEY = "supabase_anon_key"
     }
 }

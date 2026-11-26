@@ -9,6 +9,7 @@ import com.example.saddlemate.data.local.PendingVoicePinEntity
 import com.example.saddlemate.data.local.RideEventEntity
 import com.example.saddlemate.data.mock.MockData
 import com.example.saddlemate.data.mock.RouteCatalog
+import com.example.saddlemate.data.remote.SupabaseSyncClient
 import com.example.saddlemate.data.repository.RideRepository
 import com.example.saddlemate.domain.FeedbackStoryFormatter
 import com.example.saddlemate.domain.GeoPoint
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -46,6 +48,10 @@ data class VoicePinState(
     val wishes: List<FeedbackNoteEntity> = emptyList(),
     val wishRecording: Boolean = false,
     val wishMessage: String? = null,
+    val supabaseUrl: String = "",
+    val supabaseAnonKey: String = "",
+    val syncStatus: String? = null,
+    val syncing: Boolean = false,
     /** Whether the phone is online right now. */
     val online: Boolean = true,
     /** The active horse. Pins are stored for this horse and the list shows its pins. */
@@ -69,6 +75,7 @@ class FeedbackViewModel @Inject constructor(
     private val transcriber: VoskTranscriber,
     private val network: NetworkState,
     private val settings: RideSettings,
+    private val supabaseSync: SupabaseSyncClient,
 ) : ViewModel() {
 
     /** Called with the saved-pin message so the screen can speak it. Set by the screen. */
@@ -115,6 +122,31 @@ class FeedbackViewModel @Inject constructor(
             repository.observeFeedbackNotes().collect { notes ->
                 _state.value = _state.value.copy(wishes = notes)
             }
+        }
+        viewModelScope.launch {
+            settings.supabaseConfig.collect { (url, key) ->
+                _state.value = _state.value.copy(supabaseUrl = url, supabaseAnonKey = key)
+            }
+        }
+    }
+
+    fun saveSupabaseConfig(url: String, anonKey: String) {
+        settings.saveSupabaseConfig(url, anonKey)
+        _state.value = _state.value.copy(syncStatus = "Supabase-Zugangsdaten lokal gespeichert.")
+    }
+
+    fun syncWithSupabase() {
+        if (_state.value.syncing) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(syncing = true, syncStatus = "Synchronisiere mit Supabase…")
+            val rides = repository.observeRides().first()
+            val result = supabaseSync.syncAll(
+                baseUrl = _state.value.supabaseUrl,
+                anonKey = _state.value.supabaseAnonKey,
+                tickets = _state.value.wishes,
+                rides = rides,
+            )
+            _state.value = _state.value.copy(syncing = false, syncStatus = result.message)
         }
     }
 
