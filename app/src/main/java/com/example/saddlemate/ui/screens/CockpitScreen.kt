@@ -13,9 +13,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -33,11 +35,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.saddlemate.data.mock.RouteCatalog
 import com.example.saddlemate.domain.AudioMode
+import com.example.saddlemate.domain.CanterStretch
 import com.example.saddlemate.domain.Elevation
+import com.example.saddlemate.domain.FallAlarm
 import com.example.saddlemate.domain.Gait
+import com.example.saddlemate.domain.GaitSymmetryTracker
 import com.example.saddlemate.domain.RadarAlert
 import com.example.saddlemate.domain.RelativeSide
 import com.example.saddlemate.ui.viewmodels.CockpitState
@@ -99,6 +103,12 @@ fun CockpitScreen(
         onStop = viewModel::stop,
         onAudioMode = viewModel::setAudioMode,
         onSelectRoute = viewModel::selectRoute,
+        onStartDemo = viewModel::startDemoSimulation,
+        onTestFall = { viewModel.triggerFallAlert(fromTestButton = true) },
+        onCancelFall = viewModel::cancelFallAlert,
+        onDismissFall = viewModel::dismissFallResult,
+        onAskQuestion = viewModel::askRiderQuestion,
+        onSaveCanterStretch = viewModel::saveCanterStretchMark,
     )
 }
 
@@ -110,6 +120,12 @@ fun CockpitContent(
     onStop: () -> Unit,
     onAudioMode: (AudioMode) -> Unit,
     onSelectRoute: (String) -> Unit = {},
+    onStartDemo: () -> Unit = {},
+    onTestFall: () -> Unit = {},
+    onCancelFall: () -> Unit = {},
+    onDismissFall: () -> Unit = {},
+    onAskQuestion: (String) -> Unit = {},
+    onSaveCanterStretch: (CanterStretch) -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -135,11 +151,59 @@ fun CockpitContent(
         RadarCard(state.radar)
         WelfareCard(state)
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.running) {
-                Button(onClick = onStop, modifier = Modifier.weight(1f)) { Text("Ritt beenden") }
+                Button(onClick = onStop, modifier = Modifier.weight(1f)) {
+                    Text(if (state.isSimulating) "Demo beenden" else "Ritt beenden")
+                }
             } else {
                 Button(onClick = onStart, modifier = Modifier.weight(1f)) { Text("Ritt starten") }
+                OutlinedButton(onClick = onStartDemo) { Text("Demo-Ritt") }
+            }
+        }
+
+        // Hands-free Rider Q&A + Dummy Fall Protection controls
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Sprach-Assistent & Schutzengel", style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        onClick = { onAskQuestion("Ist das Pferd warmgeritten?") },
+                    ) { Text("Warm-up?", style = MaterialTheme.typography.labelSmall) }
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        onClick = { onAskQuestion("Wie weit noch bis zum Ziel?") },
+                    ) { Text("Wie weit?", style = MaterialTheme.typography.labelSmall) }
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        onClick = { onAskQuestion("Wie ist der Takt?") },
+                    ) { Text("Takt?", style = MaterialTheme.typography.labelSmall) }
+                }
+                state.lastQaAnswer?.let { ans ->
+                    Text(ans, style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedButton(onClick = onTestFall) { Text("Sturz-Schutzengel testen (Dummy)") }
+            }
+        }
+
+        if (state.detectedCanterStretches.isNotEmpty() && !state.running) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Neue Galoppstrecke erkannt!", style = MaterialTheme.typography.titleMedium)
+                    state.detectedCanterStretches.forEach { stretch ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("${stretch.lengthMeters.toInt()} m Galopp")
+                            Button(onClick = { onSaveCanterStretch(stretch) }) {
+                                Text("Als Galoppstrecke speichern")
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -195,21 +259,39 @@ fun CockpitContent(
             }
         }
     }
+
+    FallAlertOverlay(
+        state = state,
+        onCancel = onCancelFall,
+        onDismissResult = onDismissFall,
+    )
 }
 
 @Composable
 private fun SpeedCard(state: CockpitState) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondary,
+            contentColor = MaterialTheme.colorScheme.onSecondary,
+        ),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 "${"%.1f".format(state.currentSpeedKmh)} km/h",
                 style = MaterialTheme.typography.displaySmall,
             )
             Text("Gangart: ${state.gait.toGerman()}", style = MaterialTheme.typography.titleMedium)
-            Text("Strecke: ${"%.0f".format(state.distanceMeters)} m · Zeit: ${state.elapsedSec} s")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("Strecke: ${"%.2f".format(state.distanceMeters / 1000.0)} km")
+                Text("Zeit: ${state.elapsedSec / 60}:${"%02d".format(state.elapsedSec % 60)}")
+            }
             if (state.calories.riderKcal > 0 || state.calories.horseKcal > 0) {
                 Text(
-                    "Kalorien: Reiter ca. ${state.calories.riderKcal} kcal · Pferd ca. ${state.calories.horseKcal} kcal",
+                    "Kalorien: Reiter ~${state.calories.riderKcal} kcal · Pferd ~${state.calories.horseKcal} kcal",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -256,15 +338,74 @@ private fun RadarCard(alerts: List<RadarAlert>) {
 @Composable
 private fun WelfareCard(state: CockpitState) {
     val score = state.welfare?.score ?: 100
+    val warmupProgress = (state.warmupMinutes / state.requiredWarmupMinutes).toFloat().coerceIn(0f, 1f)
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Welfare: $score / 100", style = MaterialTheme.typography.titleMedium)
+            Text("Tierwohl-Wächter: $score / 100", style = MaterialTheme.typography.titleMedium)
             LinearProgressIndicator(
                 progress = { score / 100f },
                 modifier = Modifier.fillMaxWidth(),
             )
+            Text(
+                "Warm-up: ${state.warmupMinutes.toInt()} / ${state.requiredWarmupMinutes.toInt()} Min. Schritt",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            LinearProgressIndicator(
+                progress = { warmupProgress },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (state.cooldownNeededMinutes > 0.5) {
+                Text(
+                    "Cool-down empfohlen: noch ${state.cooldownNeededMinutes.toInt()} Min. Schritt",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            val symText = if (state.trotSymmetryPct < GaitSymmetryTracker.WARN_THRESHOLD_PCT) {
+                "Trab-Takt: ${state.trotSymmetryPct.toInt()}% (Hufe / Steine prüfen!)"
+            } else {
+                "Trab-Takt-Symmetrie: ${state.trotSymmetryPct.toInt()}%"
+            }
+            Text(symText, style = MaterialTheme.typography.bodySmall)
+            state.surfaceWarning?.let { Text("⚠ $it", color = MaterialTheme.colorScheme.tertiary) }
             state.welfare?.warnings?.forEach { Text("• $it") }
         }
+    }
+}
+
+@Composable
+private fun FallAlertOverlay(
+    state: CockpitState,
+    onCancel: () -> Unit,
+    onDismissResult: () -> Unit,
+) {
+    when (state.fallState) {
+        FallAlarm.State.COUNTING -> {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text("Sturz erkannt! (${state.fallRemainingSec} s)") },
+                text = {
+                    Text(
+                        "Wenn du in ${state.fallRemainingSec} Sekunden nicht abbrichst, " +
+                            "wird der Dummy-Notruf (simulierte Standort-SMS) ausgelöst.",
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = onCancel,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    ) { Text("Ich bin okay (Abbrechen)") }
+                },
+            )
+        }
+        FallAlarm.State.SOS_TRIGGERED -> {
+            AlertDialog(
+                onDismissRequest = onDismissResult,
+                title = { Text("Dummy-Notruf ausgelöst") },
+                text = { Text(state.fallMessage ?: "Simulierte Standort-SMS gesendet.") },
+                confirmButton = { Button(onClick = onDismissResult) { Text("OK") } },
+            )
+        }
+        else -> Unit
     }
 }
 

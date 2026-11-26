@@ -21,7 +21,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -123,6 +125,10 @@ private val markKinds = listOf(
     MarkKind("GATE", "Tor"),
     MarkKind("WATER", "Wasserstelle"),
     MarkKind("LOOSE_HORSE", "Freilaufendes Pferd"),
+    MarkKind("CANTER_STRETCH", "Galoppstrecke"),
+    MarkKind("RESIDENT_WARN", "Mecker-Anwohner"),
+    MarkKind("MANURE_RULE", "Äpfel wegmachen"),
+    MarkKind("DEEP_MUD", "Tiefer Boden"),
     MarkKind("NOTE", "Hinweis"),
     MarkKind("VOICE_PIN", "Sprach-Pin"),
 )
@@ -372,16 +378,48 @@ fun MapScreen(viewModel: RideViewModel = rideViewModelShared()) {
     val summaryRideId = state.lastRideId
     if (summary != null && !state.running && summaryRideId != null) {
         var rideName by remember(summaryRideId) { mutableStateOf("") }
+        var trailDifficulty by remember(summaryRideId) { mutableStateOf("Entspannt") }
+        var soilDepth by remember(summaryRideId) { mutableStateOf("Gut / Griffig") }
         AlertDialog(
             onDismissRequest = { viewModel.dismissSummary() },
             title = { Text("Ritt beendet") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Text("Strecke: ${"%.2f".format(summary.distanceMeters / 1000)} km")
                     Text("Dauer: ${summary.durationMs / 60_000} min")
                     Text("Ø ${"%.1f".format(summary.averageSpeedKmh)} km/h · max ${"%.1f".format(summary.maxSpeedKmh)} km/h")
                     if (state.calories.riderKcal > 0 || state.calories.horseKcal > 0) {
                         Text("Kalorien: Reiter ~${state.calories.riderKcal} kcal · Pferd ~${state.calories.horseKcal} kcal")
+                    }
+                    Text("Strecken-Eindruck:", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Anfänger", "Entspannt", "Hände a.d. Taschen").forEach { diff ->
+                            FilterChip(
+                                selected = trailDifficulty == diff,
+                                onClick = { trailDifficulty = diff },
+                                label = { Text(diff, style = MaterialTheme.typography.labelSmall) },
+                            )
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Gut / Griffig", "Hart", "Tief / Matsch").forEach { soil ->
+                            FilterChip(
+                                selected = soilDepth == soil,
+                                onClick = { soilDepth = soil },
+                                label = { Text(soil, style = MaterialTheme.typography.labelSmall) },
+                            )
+                        }
+                    }
+                    if (state.detectedCanterStretches.isNotEmpty()) {
+                        Text("Galoppstrecke erkannt:", style = MaterialTheme.typography.labelLarge)
+                        state.detectedCanterStretches.forEach { stretch ->
+                            OutlinedButton(onClick = { viewModel.saveCanterStretchMark(stretch) }) {
+                                Text("Galoppstrecke (${stretch.lengthMeters.toInt()} m) speichern")
+                            }
+                        }
                     }
                     OutlinedTextField(
                         value = rideName,
@@ -392,7 +430,15 @@ fun MapScreen(viewModel: RideViewModel = rideViewModelShared()) {
                 }
             },
             confirmButton = {
-                Button(onClick = { viewModel.renameLastRideAndDismiss(rideName) }) {
+                Button(onClick = {
+                    val note = "Eindruck: $trailDifficulty · Boden: $soilDepth"
+                    val finalName = rideName.trim().ifEmpty { "" }
+                    if (finalName.isNotEmpty()) {
+                        viewModel.renameLastRideAndDismiss("$finalName ($trailDifficulty)")
+                    } else {
+                        viewModel.renameLastRideAndDismiss(note)
+                    }
+                }) {
                     Text("Speichern & Schließen")
                 }
             },

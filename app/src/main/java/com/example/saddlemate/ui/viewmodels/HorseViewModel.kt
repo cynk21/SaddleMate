@@ -18,6 +18,7 @@ data class HorseUiState(
     val horses: List<Horse> = emptyList(),
     val activeHorseId: String? = null,
     val riderProfile: RiderProfile = RiderProfile(),
+    val emergencyContact: Pair<String, String> = Pair("", ""),
 )
 
 @HiltViewModel
@@ -30,12 +31,15 @@ class HorseViewModel @Inject constructor(
         repository.observeHorses(),
         settings.activeHorseId,
         settings.riderProfile,
-    ) { horses, active, rider -> HorseUiState(horses, active, rider) }
+        settings.emergencyContact,
+    ) { horses, active, rider, sos -> HorseUiState(horses, active, rider, sos) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HorseUiState())
 
     fun select(id: String) = settings.selectHorse(id)
 
     fun saveRiderProfile(profile: RiderProfile) = settings.saveRiderProfile(profile)
+
+    fun saveEmergencyContact(name: String, phone: String) = settings.saveEmergencyContact(name, phone)
 
     /** Saves an edited horse. Name and age must be valid; the caller checks that. */
     fun save(horse: Horse) {

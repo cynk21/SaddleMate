@@ -2,12 +2,16 @@ package com.example.saddlemate.ui.map
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Pets
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Traffic
 import androidx.compose.material.icons.filled.TurnSlightRight
 import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.filled.Waves
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.example.saddlemate.domain.MarkIcon
 import com.example.saddlemate.ui.icons.HorseIcons
@@ -20,6 +24,10 @@ fun markIconVector(icon: MarkIcon): ImageVector = when (icon) {
     MarkIcon.GATE -> Icons.Filled.Key
     MarkIcon.WATER -> Icons.Filled.WaterDrop
     MarkIcon.LOOSE_HORSE -> HorseIcons.HorseHead
+    MarkIcon.CANTER_STRETCH -> Icons.Filled.Bolt
+    MarkIcon.RESIDENT_WARN -> Icons.Filled.RecordVoiceOver
+    MarkIcon.MANURE_RULE -> Icons.Filled.CleaningServices
+    MarkIcon.DEEP_MUD -> Icons.Filled.Waves
     MarkIcon.NOTE -> Icons.Filled.Info
     MarkIcon.VOICE_PIN -> Icons.AutoMirrored.Filled.VolumeUp
 }

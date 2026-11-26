@@ -11,15 +11,11 @@ import org.maplibre.android.maps.Style
 /**
  * Loads the vector drawable of each mark type, rasterises it and registers it with the map
  * style. The map shows these as symbols, so marks read as icons instead of dots.
- *
- * The vector drawables live in res/drawable (mark_*.xml), one per [MarkIcon].
  */
 object MarkIconBitmaps {
 
-    /** Image id in the map style for a mark type, e.g. "mark-DOG". */
     fun imageId(icon: MarkIcon): String = "mark-${icon.name}"
 
-    /** Registers all mark icons in [style]. Replaces existing images with the same id. */
     fun register(context: Context, style: Style, sizePx: Int = 64) {
         MarkIcon.entries.forEach { icon ->
             val drawable = ContextCompat.getDrawable(context, drawableFor(icon)) ?: return@forEach
@@ -38,6 +34,10 @@ object MarkIconBitmaps {
         MarkIcon.GATE -> R.drawable.mark_gate
         MarkIcon.WATER -> R.drawable.mark_water
         MarkIcon.LOOSE_HORSE -> R.drawable.mark_horse
+        MarkIcon.CANTER_STRETCH -> R.drawable.mark_canter
+        MarkIcon.RESIDENT_WARN -> R.drawable.mark_resident
+        MarkIcon.MANURE_RULE -> R.drawable.mark_manure
+        MarkIcon.DEEP_MUD -> R.drawable.mark_mud
         MarkIcon.NOTE -> R.drawable.mark_info
         MarkIcon.VOICE_PIN -> R.drawable.mark_speaker
     }

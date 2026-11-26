@@ -1,58 +1,77 @@
 package com.example.saddlemate.ui.theme
 
-import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+    primary = EmeraldDarkPrimary,
+    onPrimary = EmeraldDarkOnPrimary,
+    primaryContainer = EmeraldDarkContainer,
+    onPrimaryContainer = EmeraldDarkOnContainer,
+    secondary = CyanSlateDarkSecondary,
+    onSecondary = CyanSlateDarkOnSecondary,
+    secondaryContainer = CyanSlateDarkContainer,
+    onSecondaryContainer = CyanSlateDarkOnContainer,
+    tertiary = GoldDarkTertiary,
+    onTertiary = GoldDarkOnTertiary,
+    tertiaryContainer = GoldDarkContainer,
+    onTertiaryContainer = GoldDarkOnContainer,
+    background = SportBgDark,
+    onBackground = SportOnSurfaceDark,
+    surface = SportSurfaceDark,
+    onSurface = SportOnSurfaceDark,
+    surfaceVariant = SportSurfaceVariantDark,
+    onSurfaceVariant = SportOnSurfaceVariantDark,
+    outline = SportOutlineDark,
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
+    primary = ForestPrimary,
+    onPrimary = ForestOnPrimary,
+    primaryContainer = ForestPrimaryContainer,
+    onPrimaryContainer = ForestOnPrimaryContainer,
+    secondary = SlateSecondary,
+    onSecondary = SlateOnSecondary,
+    secondaryContainer = SlateSecondaryContainer,
+    onSecondaryContainer = SlateOnSecondaryContainer,
+    tertiary = AmberTertiary,
+    onTertiary = AmberOnTertiary,
+    tertiaryContainer = AmberTertiaryContainer,
+    onTertiaryContainer = AmberOnTertiaryContainer,
+    background = SportBgLight,
+    onBackground = SportOnSurfaceLight,
+    surface = SportSurfaceLight,
+    onSurface = SportOnSurfaceLight,
+    surfaceVariant = SportSurfaceVariantLight,
+    onSurfaceVariant = SportOnSurfaceVariantLight,
+    outline = SportOutlineLight,
+)
 
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+private val SportShapes = Shapes(
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(22.dp),
 )
 
 @Composable
 fun SaddleMateTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
+    // Disabled dynamic wallpaper tinting so the sporty SaddleMate colors stay consistent across devices.
+    dynamicColor: Boolean = false,
+    content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
+    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
 
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
-        content = content
+        shapes = SportShapes,
+        content = content,
     )
 }

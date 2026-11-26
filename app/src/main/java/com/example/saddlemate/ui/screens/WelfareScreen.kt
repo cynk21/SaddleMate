@@ -42,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.saddlemate.domain.Horse
 import com.example.saddlemate.domain.RiderProfile
+import com.example.saddlemate.domain.WeatherConditions
+import com.example.saddlemate.domain.WeatherShield
 import com.example.saddlemate.ui.viewmodels.HorseUiState
 import com.example.saddlemate.ui.viewmodels.HorseViewModel
 import java.io.File
@@ -55,6 +57,7 @@ fun WelfareScreen(viewModel: HorseViewModel = hiltViewModel()) {
         onSave = viewModel::save,
         onDelete = viewModel::delete,
         onSaveRider = viewModel::saveRiderProfile,
+        onSaveEmergency = viewModel::saveEmergencyContact,
     )
 }
 
@@ -65,11 +68,25 @@ fun WelfareContent(
     onSave: (Horse) -> Unit = {},
     onDelete: (String) -> Unit = {},
     onSaveRider: (RiderProfile) -> Unit = {},
+    onSaveEmergency: (String, String) -> Unit = { _, _ -> },
 ) {
     var editing by remember { mutableStateOf<Horse?>(null) }
     var addingHorse by remember { mutableStateOf(false) }
     var editingRider by remember { mutableStateOf(false) }
+    var editingEmergency by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<Horse?>(null) }
+    var tempC by remember { mutableStateOf(18.0) }
+    var humidityPct by remember { mutableStateOf(60) }
+    var nightMinC by remember { mutableStateOf(4.0) }
+    var sunny by remember { mutableStateOf(true) }
+
+    val activeHorse = state.horses.firstOrNull { it.id == state.activeHorseId } ?: state.horses.firstOrNull()
+    val weatherReport = remember(tempC, humidityPct, nightMinC, sunny, activeHorse?.hasLaminitisHistory) {
+        WeatherShield.evaluate(
+            WeatherConditions(tempC, humidityPct, nightMinC, sunny),
+            hasLaminitisHistory = activeHorse?.hasLaminitisHistory == true,
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -83,6 +100,22 @@ fun WelfareContent(
         RiderProfileCard(
             profile = state.riderProfile,
             onEdit = { editingRider = true },
+        )
+
+        EmergencyContactCard(
+            name = state.emergencyContact.first,
+            phone = state.emergencyContact.second,
+            onEdit = { editingEmergency = true },
+        )
+
+        WeatherShieldCard(
+            tempC = tempC,
+            nightMinC = nightMinC,
+            sunny = sunny,
+            report = weatherReport,
+            onTempStep = { delta -> tempC = (tempC + delta).coerceIn(-5.0, 40.0) },
+            onNightStep = { delta -> nightMinC = (nightMinC + delta).coerceIn(-10.0, 25.0) },
+            onToggleSunny = { sunny = !sunny },
         )
 
         Row(
@@ -159,6 +192,83 @@ fun WelfareContent(
             },
         )
     }
+
+    if (editingEmergency) {
+        EmergencyEditDialog(
+            initialName = state.emergencyContact.first,
+            initialPhone = state.emergencyContact.second,
+            onDismiss = { editingEmergency = false },
+            onSave = { n, p ->
+                onSaveEmergency(n, p)
+                editingEmergency = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun EmergencyContactCard(name: String, phone: String, onEdit: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Sturz-Notfallkontakt (Dummy-SOS)", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (name.isBlank() && phone.isBlank()) "Noch kein Kontakt hinterlegt (Dummy-Test aktiv)"
+                else "$name · $phone",
+            )
+            OutlinedButton(onClick = onEdit) { Text("Notfallkontakt bearbeiten") }
+        }
+    }
+}
+
+@Composable
+private fun WeatherShieldCard(
+    tempC: Double,
+    nightMinC: Double,
+    sunny: Boolean,
+    report: com.example.saddlemate.domain.WeatherShieldReport,
+    onTempStep: (Double) -> Unit,
+    onNightStep: (Double) -> Unit,
+    onToggleSunny: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Fruktan- & Hitzestress-Ampel", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Hitze: ${report.heatRisk.name} (TSI ${"%.1f".format(report.thermalStressIndex)}) · " +
+                    "Fruktan: ${report.fructanRisk.name}",
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = { onTempStep(-3.0) }) { Text("-3°C") }
+                OutlinedButton(onClick = { onTempStep(3.0) }) { Text("${tempC.toInt()}°C +3") }
+                OutlinedButton(onClick = { onNightStep(-3.0) }) { Text("Nacht ${nightMinC.toInt()}°C -3") }
+                OutlinedButton(onClick = onToggleSunny) { Text(if (sunny) "Sonne" else "Bewölkt") }
+            }
+            report.warnings.forEach { w -> Text("• $w", style = MaterialTheme.typography.bodySmall) }
+        }
+    }
+}
+
+@Composable
+private fun EmergencyEditDialog(
+    initialName: String,
+    initialPhone: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit,
+) {
+    var name by remember { mutableStateOf(initialName) }
+    var phone by remember { mutableStateOf(initialPhone) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Sturz-Notfallkontakt") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true)
+                OutlinedTextField(value = phone, onValueChange = { phone = it }, label = { Text("Telefonnummer") }, singleLine = true)
+            }
+        },
+        confirmButton = { Button(onClick = { onSave(name, phone) }) { Text("Speichern") } },
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Abbrechen") } },
+    )
 }
 
 @Composable

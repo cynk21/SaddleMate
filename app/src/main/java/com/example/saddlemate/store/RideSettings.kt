@@ -34,6 +34,14 @@ class RideSettings @Inject constructor(
     private val _selectedRouteId = MutableStateFlow(prefs.getString(KEY_ROUTE, null))
     val selectedRouteId: StateFlow<String?> = _selectedRouteId.asStateFlow()
 
+    private val _emergencyContact = MutableStateFlow(
+        Pair(
+            prefs.getString(KEY_EMERGENCY_NAME, "") ?: "",
+            prefs.getString(KEY_EMERGENCY_PHONE, "") ?: "",
+        ),
+    )
+    val emergencyContact: StateFlow<Pair<String, String>> = _emergencyContact.asStateFlow()
+
     fun selectHorse(id: String?) {
         prefs.edit().putString(KEY_HORSE, id).apply()
         _activeHorseId.value = id
@@ -47,6 +55,16 @@ class RideSettings @Inject constructor(
     fun setAudioMode(mode: AudioMode) {
         prefs.edit().putString(KEY_AUDIO, mode.name).apply()
         _audioMode.value = mode
+    }
+
+    fun saveEmergencyContact(name: String, phone: String) {
+        val n = name.trim()
+        val p = phone.trim()
+        prefs.edit()
+            .putString(KEY_EMERGENCY_NAME, n)
+            .putString(KEY_EMERGENCY_PHONE, p)
+            .apply()
+        _emergencyContact.value = Pair(n, p)
     }
 
     fun saveRiderProfile(profile: RiderProfile) {
@@ -74,5 +92,7 @@ class RideSettings @Inject constructor(
         const val KEY_RIDER_WEIGHT = "rider_weight_kg"
         const val KEY_RIDER_HEIGHT = "rider_height_cm"
         const val KEY_RIDER_AGE = "rider_age_years"
+        const val KEY_EMERGENCY_NAME = "emergency_name"
+        const val KEY_EMERGENCY_PHONE = "emergency_phone"
     }
 }

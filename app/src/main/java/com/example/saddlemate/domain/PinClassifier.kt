@@ -8,9 +8,13 @@ package com.example.saddlemate.domain
 object PinClassifier {
 
     private val rules: List<Pair<List<String>, MarkIcon>> = listOf(
+        listOf("galopp", "galoppstrecke", "rennbahn") to MarkIcon.CANTER_STRETCH,
+        listOf("anwohner", "mecker", "meckert", "schimpft", "dorf") to MarkIcon.RESIDENT_WARN,
+        listOf("äpfel", "aepfel", "mist", "abäppeln", "wegmachen") to MarkIcon.MANURE_RULE,
+        listOf("matsch", "tiefer boden", "sumpf", "schlamm") to MarkIcon.DEEP_MUD,
         listOf("hund", "hunde", "kläffer", "bellen") to MarkIcon.DOG,
         listOf("kurve", "unübersichtlich", "biegung", "schlechte sicht") to MarkIcon.BLIND_TURN,
-        listOf("straße", "strasse", "querung", "überquerung", "verkehr", "ampel", "auto") to MarkIcon.ROAD_CROSSING,
+        listOf("straße", "strasse", "querung", "überquerung", "verkehr", "ampel", "auto", "bürgersteig") to MarkIcon.ROAD_CROSSING,
         listOf("tor", "schranke", "gatter", "zaun", "schloss") to MarkIcon.GATE,
         listOf("wasser", "bach", "tränke", "pfütze", "teich", "fluss") to MarkIcon.WATER,
         listOf("pferd", "pferde", "herde", "koppel", "ausgebrochen") to MarkIcon.LOOSE_HORSE,

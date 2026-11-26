@@ -14,7 +14,12 @@ import com.example.saddlemate.data.repository.RideStore
 import com.example.saddlemate.domain.AudioMode
 import com.example.saddlemate.domain.CalorieEstimate
 import com.example.saddlemate.domain.CalorieCalculator
+import com.example.saddlemate.domain.CanterStretch
+import com.example.saddlemate.domain.CanterStretchDetector
+import com.example.saddlemate.domain.FallAlarm
+import com.example.saddlemate.domain.FallDetector
 import com.example.saddlemate.domain.Gait
+import com.example.saddlemate.domain.GaitSymmetryTracker
 import com.example.saddlemate.domain.GeoPoint
 import com.example.saddlemate.domain.HazardMarker
 import com.example.saddlemate.domain.HazardRadarEngine
@@ -22,16 +27,20 @@ import com.example.saddlemate.domain.Horse
 import com.example.saddlemate.domain.RadarAlert
 import com.example.saddlemate.domain.RideAnalysis
 import com.example.saddlemate.domain.RelativeSide
+import com.example.saddlemate.domain.SurfaceLoadTracker
 import com.example.saddlemate.domain.TelemetryEngine
+import com.example.saddlemate.domain.VoiceQaRouter
 import com.example.saddlemate.domain.WelfareEngine
 import com.example.saddlemate.domain.WelfareReport
 import com.example.saddlemate.domain.NavigationGuidance
 import com.example.saddlemate.domain.PinProximity
 import com.example.saddlemate.domain.outputForAlert
 import com.example.saddlemate.sensors.AlertFeedback
+import com.example.saddlemate.sensors.ImpactSensor
 import com.example.saddlemate.sensors.RideService
 import com.example.saddlemate.sensors.LocationSource
 import com.example.saddlemate.store.RideSettings
+import kotlinx.coroutines.delay
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
@@ -82,6 +91,24 @@ data class CockpitState(
     val calories: CalorieEstimate = CalorieEstimate(0, 0),
     /** Short status banner on the cockpit (e.g. "Ritt gestartet"). */
     val bannerMessage: String? = null,
+    /** Warm-up walk progress (0..1) and cool-down minutes needed after fast work. */
+    val warmupMinutes: Double = 0.0,
+    val requiredWarmupMinutes: Double = 10.0,
+    val cooldownNeededMinutes: Double = 0.0,
+    /** Live trot symmetry percentage from IMU (100% = even). */
+    val trotSymmetryPct: Double = 100.0,
+    /** Surface load warning (e.g. fast trot on asphalt). */
+    val surfaceWarning: String? = null,
+    /** Detected >= 250 m canter stretches ready for 1-tap saving after the ride. */
+    val detectedCanterStretches: List<CanterStretch> = emptyList(),
+    /** Whether the current ride is running via the indoor Demo Ride Simulator. */
+    val isSimulating: Boolean = false,
+    /** Fall detection countdown state & seconds left (Dummy SOS). */
+    val fallState: FallAlarm.State = FallAlarm.State.IDLE,
+    val fallRemainingSec: Int = 0,
+    val fallMessage: String? = null,
+    /** Last spoken Q&A answer for the rider. */
+    val lastQaAnswer: String? = null,
 )
 
 /** A hazard that triggered the radar during the ride, with where and when it happened. */
@@ -103,6 +130,7 @@ class RideViewModel @Inject constructor(
     private val welfareEngine: WelfareEngine,
     private val feedback: AlertFeedback,
     private val locationSource: LocationSource,
+    private val impactSensor: ImpactSensor,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(CockpitState())
@@ -116,10 +144,18 @@ class RideViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private var job: Job? = null
+    private var sensorJob: Job? = null
+    private var fallTimerJob: Job? = null
     private val navCoach = NavigationGuidance.Coach()
+    private val fallDetector = FallDetector()
+    private val fallAlarm = FallAlarm(countdownSec = 30)
+    private val symmetryTracker = GaitSymmetryTracker()
     private val track = mutableListOf<GeoPoint>()
     private var rideStart = 0L
     private var warmupMs = 0L
+    private var hasStartedFastWork = false
+    private var cooldownDebtMs = 0L
+    private var lastSurfaceWarnAtMs = 0L
     private var headingDeg = 0.0
     private val spokenAlerts = mutableSetOf<String>()
     /** Voice pins of the horse, loaded at ride start. Spoken once each when the rider is near. */
@@ -224,18 +260,25 @@ class RideViewModel @Inject constructor(
             track.clear()
             spokenAlerts.clear()
             spokenPins.clear()
+            symmetryTracker.reset()
+            fallDetector.reset()
+            fallAlarm.reset()
             voicePins = repository.voicePins()
             announce("Ritt gestartet")
             rideStart = System.currentTimeMillis()
             warmupMs = 0L
+            hasStartedFastWork = false
+            cooldownDebtMs = 0L
             val routeId = _state.value.selectedRouteId
             routeLength = RouteCatalog.lengthMeters(repository.route(routeId))
+            val reqWarmup = if (horse.isYoung) 15.0 else 10.0
             _state.value = CockpitState(
                 running = true,
                 horse = horse,
                 audioMode = settings.audioMode.value,
                 selectedRouteId = routeId,
                 routeLengthMeters = routeLength,
+                requiredWarmupMinutes = reqWarmup,
                 shownRideId = _state.value.shownRideId,
                 shownTrack = _state.value.shownTrack,
                 navRouteId = _state.value.navRouteId,
@@ -243,13 +286,226 @@ class RideViewModel @Inject constructor(
                 ownPosition = _state.value.ownPosition,
                 bannerMessage = "Ritt gestartet",
             )
-            // The ride id is fixed now, so the service can write each fix to this ride.
-            // The ride row is created first; the service then writes fixes that reference it.
             val newId = UUID.randomUUID().toString()
             currentRideId = newId
             rideStore.begin(newId, horse.id, System.currentTimeMillis())
             ContextCompat.startForegroundService(appContext, Intent(appContext, RideService::class.java))
+            startMotionMonitoring()
             job = viewModelScope.launch { runRide(horse) }
+        }
+    }
+
+    /**
+     * Starts an accelerated indoor Demo Ride Simulator along the selected route so every display,
+     * gait transition (walk -> trot -> canter -> walk), hazard radar, and welfare check can be
+     * verified indoors without a horse.
+     */
+    fun startDemoSimulation() {
+        if (job?.isActive == true) return
+        viewModelScope.launch {
+            val horseId = settings.activeHorseId.value ?: MockData.horses.first().id
+            val horse = repository.horse(horseId) ?: return@launch
+            feedback.init()
+            track.clear()
+            spokenAlerts.clear()
+            spokenPins.clear()
+            symmetryTracker.reset()
+            fallDetector.reset()
+            fallAlarm.reset()
+            voicePins = repository.voicePins()
+            announce("Demo-Ritt gestartet")
+            rideStart = System.currentTimeMillis()
+            warmupMs = 0L
+            hasStartedFastWork = false
+            cooldownDebtMs = 0L
+            val routeId = _state.value.selectedRouteId
+            val routePts = repository.route(routeId)
+            routeLength = RouteCatalog.lengthMeters(routePts)
+            val reqWarmup = if (horse.isYoung) 15.0 else 10.0
+            _state.value = CockpitState(
+                running = true,
+                isSimulating = true,
+                horse = horse,
+                audioMode = settings.audioMode.value,
+                selectedRouteId = routeId,
+                routeLengthMeters = routeLength,
+                requiredWarmupMinutes = reqWarmup,
+                shownRideId = _state.value.shownRideId,
+                shownTrack = _state.value.shownTrack,
+                navRouteId = _state.value.navRouteId,
+                navHint = _state.value.navHint,
+                ownPosition = routePts.firstOrNull(),
+                bannerMessage = "Demo-Ritt läuft (Schritt → Trab → Galopp)",
+            )
+            val newId = UUID.randomUUID().toString()
+            currentRideId = newId
+            rideStore.begin(newId, horse.id, rideStart)
+            job = viewModelScope.launch { runDemoSimulation(horse, routePts) }
+        }
+    }
+
+    private suspend fun runDemoSimulation(horse: Horse, routePts: List<GeoPoint>) {
+        if (routePts.size < 2) return
+        var simTime = rideStart
+        var elapsedSec = 0
+        // Simulate 60 steps along the route: walk (0..18), trot (19..38), canter (39..50), cooldown walk (51..59)
+        val totalSteps = 60
+        for (step in 0 until totalSteps) {
+            if (!(_state.value.running)) break
+            val share = step.toDouble() / (totalSteps - 1)
+            val base = RouteCatalog.pointAtShare(routePts, share)
+            // Adjust timestamp delta to yield realistic walk (~5.5 km/h), trot (~11 km/h), canter (~20 km/h)
+            val targetSpeedMps = when {
+                step < 18 -> 1.5
+                step < 38 -> 3.1
+                step < 50 -> 5.6
+                else -> 1.6
+            }
+            if (step > 0) {
+                val prev = track.last()
+                val dist = telemetry.distanceMeters(prev, base).coerceAtLeast(1.5)
+                val dtMs = ((dist / targetSpeedMps) * 1000.0).toLong().coerceIn(500L, 60_000L)
+                simTime += dtMs
+                elapsedSec += (dtMs / 1000L).toInt().coerceAtLeast(1)
+            }
+            val pt = base.copy(timeMillis = simTime)
+            rideStore.appendSample(pt)
+            _state.value = _state.value.copy(ownPosition = pt)
+            navigate(pt)
+            processPoint(pt, horse, elapsedSec)
+            delay(450L)
+        }
+    }
+
+    /** Triggers the 30-second Dummy Fall Alarm countdown (for testing or real accelerometer spike). */
+    fun triggerFallAlert(fromTestButton: Boolean = false) {
+        if (fallAlarm.currentState == FallAlarm.State.COUNTING) return
+        val now = System.currentTimeMillis()
+        fallAlarm.start(now)
+        val msg = if (fromTestButton) {
+            "Sturz-Test! 30 Sekunden Countdown – sage Alles gut oder tippe Abbrechen."
+        } else {
+            "Sturz erkannt! Sage Alles gut oder tippe Abbrechen!"
+        }
+        announce(msg)
+        _state.value = _state.value.copy(
+            fallState = fallAlarm.currentState,
+            fallRemainingSec = fallAlarm.remainingSec(now),
+            fallMessage = null,
+        )
+        fallTimerJob?.cancel()
+        fallTimerJob = viewModelScope.launch {
+            while (fallAlarm.currentState == FallAlarm.State.COUNTING) {
+                delay(500L)
+                val t = System.currentTimeMillis()
+                val expired = fallAlarm.tick(t)
+                if (expired) {
+                    val contact = settings.emergencyContact.value
+                    val target = if (contact.first.isNotBlank()) "${contact.first} (${contact.second})" else "Notfallkontakt"
+                    val dummyNote = "DUMMY-SOS ausgelöst: Standort-SMS an $target simuliert (kein echter Notruf)."
+                    announce("Dummy-Notruf ausgelöst.")
+                    _state.value = _state.value.copy(
+                        fallState = FallAlarm.State.SOS_TRIGGERED,
+                        fallRemainingSec = 0,
+                        fallMessage = dummyNote,
+                        bannerMessage = dummyNote,
+                    )
+                    break
+                } else {
+                    _state.value = _state.value.copy(
+                        fallState = fallAlarm.currentState,
+                        fallRemainingSec = fallAlarm.remainingSec(t),
+                    )
+                }
+            }
+        }
+    }
+
+    fun cancelFallAlert() {
+        fallTimerJob?.cancel()
+        if (fallAlarm.cancel()) {
+            announce("Sturzalarm abgebrochen. Alles gut.")
+        } else {
+            fallAlarm.reset()
+        }
+        _state.value = _state.value.copy(
+            fallState = FallAlarm.State.IDLE,
+            fallRemainingSec = 0,
+            fallMessage = null,
+        )
+    }
+
+    fun dismissFallResult() {
+        fallAlarm.reset()
+        _state.value = _state.value.copy(
+            fallState = FallAlarm.State.IDLE,
+            fallRemainingSec = 0,
+            fallMessage = null,
+        )
+    }
+
+    /** Answers a rider question hands-free via TTS + banner. */
+    fun askRiderQuestion(question: String) {
+        val st = _state.value
+        val route = if (st.shownTrack.size >= 2) st.shownTrack else repository.route(st.selectedRouteId)
+        val pos = st.ownPosition ?: st.trail.lastOrNull()
+        val rem = pos?.let { NavigationGuidance.status(route, it)?.remainingM }
+        val nextHazard = st.radar.firstOrNull()
+        val ctx = VoiceQaRouter.RideQaContext(
+            warmupMinutes = st.warmupMinutes,
+            requiredWarmupMinutes = st.requiredWarmupMinutes,
+            cooldownNeededMinutes = st.cooldownNeededMinutes,
+            distanceMeters = st.distanceMeters,
+            remainingMeters = rem,
+            welfareScore = st.welfare?.score ?: 100,
+            symmetryPct = st.trotSymmetryPct,
+            nextHazardLabel = nextHazard?.hazard?.label,
+            nextHazardDistM = nextHazard?.distanceMeters,
+        )
+        val answer = VoiceQaRouter.answer(question, ctx)
+            ?: "Dazu habe ich noch keine Daten. Frag nach Strecke, Warm-up, Takt oder Gefahr."
+        _state.value = _state.value.copy(lastQaAnswer = answer)
+        announce(answer)
+    }
+
+    /** Saves a detected >= 250 m canter stretch as a community map mark ("Galoppstrecke"). */
+    fun saveCanterStretchMark(stretch: CanterStretch) {
+        viewModelScope.launch {
+            val horseId = settings.activeHorseId.value ?: MockData.horses.first().id
+            repository.addNote(
+                horseId,
+                RideEventEntity(
+                    rideId = "",
+                    lat = stretch.midpoint.lat,
+                    lon = stretch.midpoint.lon,
+                    timeMillis = System.currentTimeMillis(),
+                    type = "CANTER_STRETCH",
+                    label = "Galoppstrecke (${stretch.lengthMeters.toInt()} m)",
+                    note = "Automatisch erkannt",
+                    source = "AUTO",
+                ),
+            )
+            _state.value = _state.value.copy(
+                detectedCanterStretches = _state.value.detectedCanterStretches.filterNot { it == stretch },
+                bannerMessage = "Galoppstrecke gespeichert (${stretch.lengthMeters.toInt()} m)",
+            )
+        }
+    }
+
+    private fun startMotionMonitoring() {
+        sensorJob?.cancel()
+        sensorJob = viewModelScope.launch {
+            runCatching {
+                impactSensor.motionStream(fallDetector).collect { sample ->
+                    val sym = symmetryTracker.onAccelSample(sample.magnitudeG, _state.value.gait)
+                    if (sym != _state.value.trotSymmetryPct) {
+                        _state.value = _state.value.copy(trotSymmetryPct = sym)
+                    }
+                    if (sample.fallResult == FallDetector.Result.FALL_CONFIRMED && _state.value.running) {
+                        triggerFallAlert(fromTestButton = false)
+                    }
+                }
+            }
         }
     }
 
@@ -369,7 +625,11 @@ class RideViewModel @Inject constructor(
     fun stop() {
         job?.cancel()
         job = null
-        appContext.startService(Intent(appContext, RideService::class.java).setAction(RideService.ACTION_STOP))
+        sensorJob?.cancel()
+        sensorJob = null
+        if (!_state.value.isSimulating) {
+            appContext.startService(Intent(appContext, RideService::class.java).setAction(RideService.ACTION_STOP))
+        }
         viewModelScope.launch { finish() }
     }
 
@@ -387,10 +647,39 @@ class RideViewModel @Inject constructor(
     private fun processPoint(point: GeoPoint, horse: Horse, elapsedSec: Int) {
         val previous = track.lastOrNull()
         track += point
-        // Heading follows the track; on a curve the radar cone rotates with the rider.
         if (previous != null) headingDeg = radar.bearingDeg(previous, point)
+        val dtMs = if (previous != null) (point.timeMillis - previous.timeMillis).coerceAtLeast(0L) else 0L
         val analysis = telemetry.analyze(track.toList())
         val speedKmh = currentSpeedKmh(track)
+        val gait = telemetry.inferGait(speedKmh)
+
+        // Warm-Up & Cool-Down Guardian: accumulate initial walk before first trot/canter/gallop;
+        // fast work adds cool-down walk time, walk afterwards pays it down.
+        when (gait) {
+            Gait.WALK -> {
+                if (!hasStartedFastWork) warmupMs += dtMs
+                else cooldownDebtMs = (cooldownDebtMs - dtMs).coerceAtLeast(0L)
+            }
+            Gait.TROT -> {
+                hasStartedFastWork = true
+                cooldownDebtMs += (dtMs / 3L)
+            }
+            Gait.CANTER, Gait.GALLOP -> {
+                hasStartedFastWork = true
+                cooldownDebtMs += dtMs
+            }
+            Gait.STANDSTILL -> Unit
+        }
+
+        // Surface-load check against nearest route segment surface
+        val surface = nearestRouteSurface(point, _state.value.selectedRouteId)
+        val surfaceWarn = SurfaceLoadTracker.checkLoad(gait, surface, horse.hasLaminitisHistory)
+        val nowMs = System.currentTimeMillis()
+        if (surfaceWarn != null && nowMs - lastSurfaceWarnAtMs > 20_000L) {
+            lastSurfaceWarnAtMs = nowMs
+            feedback.deliver(settings.audioMode.value.outputForAlert(), surfaceWarn)
+        }
+
         val alerts = radar.evaluate(point, headingDeg, repository.hazards(_state.value.selectedRouteId))
         val newEvents = announce(alerts, point)
         announceNearPins(point)
@@ -404,14 +693,34 @@ class RideViewModel @Inject constructor(
             elapsedSec = elapsedSec,
             distanceMeters = analysis.distanceMeters,
             currentSpeedKmh = speedKmh,
-            gait = telemetry.inferGait(speedKmh),
+            gait = gait,
             radar = alerts,
             welfare = welfareEngine.evaluate(analysis, horse, warmupMs, temperatureC = null),
             trail = track.toList(),
             radarEvents = _state.value.radarEvents + newEvents,
             routeProgress = progress,
             calories = calories,
+            warmupMinutes = warmupMs / 60_000.0,
+            cooldownNeededMinutes = cooldownDebtMs / 60_000.0,
+            surfaceWarning = surfaceWarn,
         )
+    }
+
+    private fun nearestRouteSurface(point: GeoPoint, routeId: String): String? {
+        val info = RouteCatalog.byId(routeId) ?: return null
+        val segments = runCatching { com.example.saddlemate.data.mock.SurfaceData.load(appContext, info) }.getOrDefault(emptyList())
+        var bestDist = Double.MAX_VALUE
+        var bestSurface: String? = null
+        for (seg in segments) {
+            for (p in seg.points) {
+                val d = telemetry.distanceMeters(point, p)
+                if (d < bestDist) {
+                    bestDist = d
+                    bestSurface = seg.surface
+                }
+            }
+        }
+        return if (bestDist <= 60.0) bestSurface else null
     }
 
     private fun currentSpeedKmh(points: List<GeoPoint>): Double {
@@ -488,13 +797,16 @@ class RideViewModel @Inject constructor(
                 horseCalories = calories.horseKcal,
             ),
         )
+        val canterStretches = CanterStretchDetector.detect(track.toList(), telemetry)
         feedback.shutdown()
         _state.value = _state.value.copy(
             running = false,
+            isSimulating = false,
             lastSummary = analysis,
             lastRideId = id,
             welfare = welfare,
             calories = calories,
+            detectedCanterStretches = canterStretches,
             bannerMessage = "Ritt beendet",
         )
     }
